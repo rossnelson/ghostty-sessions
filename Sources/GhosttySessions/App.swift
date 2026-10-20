@@ -122,10 +122,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     return item
   }
 
+  // The menu bar draws template images in one color and ignores contentTintColor,
+  // so a waiting state uses a non-template image and a colored title.
   private func updateBadge() {
-    let count = store.waiting.count
-    statusItem.button?.title = count > 0 ? " \(count)" : ""
-    statusItem.button?.contentTintColor = count > 0 ? NSColor.systemOrange : nil
+    guard let button = statusItem.button else { return }
+    let symbol = "sparkles.rectangle.stack"
+    let waiting = store.waiting
+    let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Sessions")
+
+    guard !waiting.isEmpty else {
+      image?.isTemplate = true
+      button.image = image
+      button.attributedTitle = NSAttributedString(string: "")
+      return
+    }
+
+    let permission = waiting.contains { $0.state == .needsPermission }
+    let color = NSColor(permission ? store.theme.permission : store.theme.waiting)
+    let tinted = image?.withSymbolConfiguration(.init(paletteColors: [color]))
+    tinted?.isTemplate = false
+    button.image = tinted
+    button.attributedTitle = NSAttributedString(
+      string: " \(waiting.count)",
+      attributes: [
+        .foregroundColor: color,
+        .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+      ]
+    )
   }
 
   private func registerHotKeys() {

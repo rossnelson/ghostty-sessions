@@ -150,6 +150,22 @@ private struct VisualEffect: NSViewRepresentable {
   func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
+// Dragging the header moves the panel; the app docks it to an edge on release.
+private struct DragHandle: NSViewRepresentable {
+  final class HandleView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+
+    override func mouseDown(with event: NSEvent) {
+      window?.performDrag(with: event)
+      NotificationCenter.default.post(name: .panelDragEnded, object: nil)
+    }
+  }
+
+  func makeNSView(context: Context) -> HandleView { HandleView() }
+  func updateNSView(_ nsView: HandleView, context: Context) {}
+}
+
 private struct Header: View {
   @ObservedObject var store: SessionStore
 
@@ -175,6 +191,7 @@ private struct Header: View {
         .background(Capsule().fill(theme.foreground.opacity(0.08)))
         .help("Jump to the session that has waited longest")
     }
+    .background(DragHandle().padding(-18))
   }
 }
 

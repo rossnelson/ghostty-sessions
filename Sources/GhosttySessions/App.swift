@@ -14,8 +14,17 @@ final class SidebarPanel: NSPanel {
   override var canBecomeMain: Bool { false }
 }
 
+enum PanelEdge: String {
+  case left
+  case right
+}
+
+extension Notification.Name {
+  static let panelDragEnded = Notification.Name("panelDragEnded")
+}
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuDelegate {
   private let store = SessionStore()
   private var panel: SidebarPanel!
   private var statusItem: NSStatusItem!
@@ -24,6 +33,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
   private let width: CGFloat = 310
   private let margin: CGFloat = 10
+  private let displayMenu = NSMenu()
+
+  private var displayName: String? {
+    get { UserDefaults.standard.string(forKey: "panelDisplay") }
+    set { UserDefaults.standard.set(newValue, forKey: "panelDisplay") }
+  }
+
+  private var edge: PanelEdge {
+    get { PanelEdge(rawValue: UserDefaults.standard.string(forKey: "panelEdge") ?? "") ?? .right }
+    set { UserDefaults.standard.set(newValue.rawValue, forKey: "panelEdge") }
+  }
+
+  // The saved display, or the main display when the saved one is not connected.
+  private var screen: NSScreen {
+    NSScreen.screens.first { $0.localizedName == displayName } ?? NSScreen.main ?? NSScreen.screens[0]
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     buildPanel()
@@ -38,6 +63,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     cancellable = store.$sessions.sink { [weak self] _ in
       DispatchQueue.main.async { self?.updateBadge() }
+    }
+
+    NotificationCenter.default.addObserver(
+      forName: .panelDragEnded, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.snapAfterDrag() }
+    }
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.settle() }
     }
 
     store.start()
@@ -68,9 +104,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
   }
 
   private func targetFrame(visible: Bool) -> NSRect {
-    let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-    let x = visible ? screen.maxX - width - margin : screen.maxX + margin
-    return NSRect(x: x, y: screen.minY + margin, width: width, height: screen.height - margin * 2)
+    let area = screen.visibleFrame
+    let x = switch (edge, visible) {
+    case (.right, true): area.maxX - width - margin
+    case (.right, false): area.maxX + margin
+    case (.left, true): area.minX + margin
+    case (.left, false): area.minX - width - margin
+    }
+    return NSRect(x: x, y: area.minY + margin, width: width, height: area.height - margin * 2)
+  }
+
+  // After a drag, the panel docks to the nearer edge of the display it was dropped on.
+  private func snapAfterDrag() {
+    let center = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+    guard let dropped = NSScreen.screens.first(where: { $0.frame.contains(center) }) else { return settle() }
+    displayName = dropped.localizedName
+    edge = center.x < dropped.frame.midX ? .left : .right
+    settle()
+  }
+
+  private func settle() {
+    guard panel.isVisible else { return }
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.35
+      context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+      panel.animator().setFrame(targetFrame(visible: true), display: true)
+    }
+  }
+
+  @objc private func moveToDisplay(_ sender: NSMenuItem) {
+    displayName = sender.representedObject as? String
+    showPanel()
+  }
+
+  @objc private func moveToEdge(_ sender: NSMenuItem) {
+    edge = sender.tag == 0 ? .left : .right
+    showPanel()
+  }
+
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    guard menu === displayMenu else { return }
+    menu.removeAllItems()
+
+    for display in NSScreen.screens {
+      let entry = item(display.localizedName, #selector(moveToDisplay(_:)), key: "")
+      entry.representedObject = display.localizedName
+      entry.state = display == screen ? .on : .off
+      menu.addItem(entry)
+    }
+
+    menu.addItem(.separator())
+    for (tag, title) in ["Left Edge", "Right Edge"].enumerated() {
+      let entry = item(title, #selector(moveToEdge(_:)), key: "")
+      entry.tag = tag
+      entry.state = (tag == 0) == (edge == .left) ? .on : .off
+      menu.addItem(entry)
+    }
   }
 
   private func showPanel() {
@@ -119,6 +208,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     let menu = NSMenu()
     menu.addItem(item("Show or Hide Panel", #selector(togglePanel), key: ""))
     menu.addItem(item("New Session…", #selector(newSession), key: "n"))
+    let displays = NSMenuItem(title: "Move to Display", action: nil, keyEquivalent: "")
+    displayMenu.delegate = self
+    displays.submenu = displayMenu
+    menu.addItem(displays)
     menu.addItem(.separator())
     menu.addItem(item("Quit Ghostty Sessions", #selector(quit), key: "q"))
     statusItem.menu = menu

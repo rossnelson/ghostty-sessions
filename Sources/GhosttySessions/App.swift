@@ -3,6 +3,12 @@ import Carbon
 import SwiftUI
 import UserNotifications
 
+// Without this, the first click on an inactive panel only makes it key and
+// SwiftUI never sees it, so a row needs two clicks.
+final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 final class SidebarPanel: NSPanel {
   override var canBecomeKey: Bool { true }
   override var canBecomeMain: Bool { false }
@@ -54,7 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     panel.isMovableByWindowBackground = false
     panel.hidesOnDeactivate = false
 
-    let host = NSHostingView(rootView: SidebarView(store: store))
+    panel.becomesKeyOnlyIfNeeded = true
+
+    let host = FirstClickHostingView(rootView: SidebarView(store: store))
     host.wantsLayer = true
     panel.contentView = host
   }

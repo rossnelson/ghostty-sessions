@@ -13,6 +13,7 @@ enum SessionState: Int, Comparable {
 
 struct RepoChip: Hashable {
   let label: String
+  let path: String
   let branch: String?
 }
 
@@ -26,6 +27,7 @@ struct Session: Identifiable, Equatable {
   var state: SessionState
   var since: Date
   var detail: String?
+  var lastTool: String?
   var attention: Int
   var seen: Bool
 
@@ -175,6 +177,7 @@ final class SessionStore: ObservableObject {
         state: state,
         since: since,
         detail: state == .needsPermission ? (info?.pendingTool ?? "Waiting for permission") : nil,
+        lastTool: info?.pendingTool,
         attention: attention,
         seen: seen
       )
@@ -224,10 +227,10 @@ final class SessionStore: ObservableObject {
   // A session that starts inside a repo has paths relative to it, so the repo itself is the chip.
   private func chips(for repos: [String], root: String, cwd: String) -> [RepoChip] {
     guard repos.isEmpty else {
-      return repos.map { RepoChip(label: $0, branch: Git.branch(at: root + "/" + $0)) }
+      return repos.map { RepoChip(label: $0, path: root + "/" + $0, branch: Git.branch(at: root + "/" + $0)) }
     }
     guard let branch = Git.branch(at: cwd) else { return [] }
-    return [RepoChip(label: (cwd as NSString).lastPathComponent, branch: branch)]
+    return [RepoChip(label: (cwd as NSString).lastPathComponent, path: cwd, branch: branch)]
   }
 
   // Paths in a transcript are read relative to the saved folder that holds the

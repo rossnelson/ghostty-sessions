@@ -103,7 +103,7 @@ enum Claude {
       for match in matches.reversed() {
         guard let repo = repoLabel(match: match, in: text, root: root), !seen.contains(repo) else { continue }
         seen.append(repo)
-        if seen.count == 3 { return seen }
+        if seen.count == 6 { return seen }
       }
     }
     return seen

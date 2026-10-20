@@ -5,6 +5,7 @@ struct SidebarView: View {
   @ObservedObject var store: SessionStore
   @Namespace private var rows
   @Local private var appeared = false
+  @Local private var expanded: Set<String> = []
 
   private var theme: Theme { store.theme }
   private var order: [String] { store.sessions.map { "\($0.id)-\($0.needsYou)-\($0.idle)" } }
@@ -87,12 +88,21 @@ struct SidebarView: View {
     }
   }
 
+  // `--expand-all` opens every card, for screenshots.
+  private static let expandAll = CommandLine.arguments.contains("--expand-all")
+
   private func row(_ session: Session, index: Int) -> some View {
     SessionRow(
       session: session,
       theme: theme,
       isCurrent: store.focusedID == session.id,
-      onTap: { store.focus(session) }
+      expanded: expanded.contains(session.id) || Self.expandAll,
+      onTap: { store.focus(session) },
+      onToggle: {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
+          if expanded.contains(session.id) { expanded.remove(session.id) } else { expanded.insert(session.id) }
+        }
+      }
     )
     .matchedGeometryEffect(id: session.id, in: rows)
     .transition(
@@ -232,7 +242,9 @@ struct SessionRow: View {
   let session: Session
   let theme: Theme
   let isCurrent: Bool
+  let expanded: Bool
   let onTap: () -> Void
+  let onToggle: () -> Void
 
   @Local private var hovering = false
   @Local private var flash = false
@@ -247,6 +259,43 @@ struct SessionRow: View {
   }
 
   var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      header
+
+      if expanded {
+        SessionDetails(session: session, theme: theme)
+          .padding(.leading, 21)
+          .transition(.opacity.combined(with: .move(edge: .top)).combined(with: .scale(scale: 0.97, anchor: .top)))
+      }
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, session.idle && !expanded ? 7 : 10)
+    .background(rowBackground)
+    .overlay(Shimmer(trigger: session.attention, color: color))
+    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .strokeBorder(color.opacity(isCurrent ? 0.55 : 0), lineWidth: 1)
+    )
+    .contentShape(Rectangle())
+    .scaleEffect(hovering && !expanded ? 1.015 : 1)
+    .keyframeAnimator(initialValue: 1.0, trigger: session.attention) { content, scale in
+      content.scaleEffect(scale)
+    } keyframes: { _ in
+      SpringKeyframe(1.06, duration: 0.18, spring: .bouncy)
+      SpringKeyframe(1.0, duration: 0.5, spring: .bouncy)
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
+    .animation(.easeInOut(duration: 0.25), value: isCurrent)
+    .onHover { hovering = $0 }
+    .onTapGesture {
+      flash = true
+      withAnimation(.easeOut(duration: 0.45)) { flash = false }
+      onTap()
+    }
+  }
+
+  private var header: some View {
     HStack(alignment: .center, spacing: 11) {
       StatusOrb(state: session.state, color: color, quiet: session.idle)
 
@@ -267,9 +316,12 @@ struct SessionRow: View {
         if !session.repos.isEmpty || session.shellRunning {
           HStack(spacing: 4) {
             if session.shellRunning { ShellBadge(theme: theme) }
-            RepoChips(repos: session.repos, theme: theme)
+            if !expanded { RepoChips(repos: session.repos, theme: theme) }
           }
+          .contentShape(Rectangle())
+          .onTapGesture(perform: onToggle)
         }
+
 
         if let detail = session.detail {
           Text(detail)
@@ -282,34 +334,21 @@ struct SessionRow: View {
 
       Spacer(minLength: 4)
 
-      Elapsed(since: session.since, theme: theme)
+      VStack(alignment: .trailing, spacing: 6) {
+        Elapsed(since: session.since, theme: theme)
+        Button(action: onToggle) {
+          Image(systemName: "chevron.down")
+            .font(.system(size: 9, weight: .bold))
+            .rotationEffect(.degrees(expanded ? 180 : 0))
+            .frame(width: 18, height: 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(theme.dim)
+        .opacity(hovering || expanded ? 1 : 0)
+        .help(expanded ? "Collapse" : "Show repos and last action")
+      }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, session.idle ? 7 : 10)
-    .background(rowBackground)
-    .overlay(Shimmer(trigger: session.attention, color: color))
-    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .strokeBorder(color.opacity(isCurrent ? 0.55 : 0), lineWidth: 1)
-    )
-    .contentShape(Rectangle())
-    .scaleEffect(hovering ? 1.015 : 1)
-    .keyframeAnimator(initialValue: 1.0, trigger: session.attention) { content, scale in
-      content.scaleEffect(scale)
-    } keyframes: { _ in
-      SpringKeyframe(1.06, duration: 0.18, spring: .bouncy)
-      SpringKeyframe(1.0, duration: 0.5, spring: .bouncy)
-    }
-    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
-    .animation(.easeInOut(duration: 0.25), value: isCurrent)
-    .onHover { hovering = $0 }
-    .onTapGesture {
-      flash = true
-      withAnimation(.easeOut(duration: 0.45)) { flash = false }
-      onTap()
-    }
-    .help(session.repos.map { "\($0.label)  ·  \($0.branch ?? "no branch")" }.joined(separator: "\n"))
   }
 
   private var rowBackground: some View {
@@ -462,35 +501,105 @@ private struct RepoChips: View {
   let repos: [RepoChip]
   let theme: Theme
 
-  private var shown: [RepoChip] { Array(repos.prefix(2)) }
-
   var body: some View {
-    HStack(spacing: 4) {
-      ForEach(Array(shown.enumerated()), id: \.element) { index, repo in
+    if let first = repos.first {
+      HStack(spacing: 4) {
         HStack(spacing: 3) {
-          Image(systemName: index == 0 ? "arrow.triangle.branch" : "folder")
+          Image(systemName: "arrow.triangle.branch")
             .font(.system(size: 8, weight: .semibold))
-          Text((repo.label as NSString).lastPathComponent)
+          Text((first.label as NSString).lastPathComponent)
             .lineLimit(1)
             .truncationMode(.middle)
         }
-        .font(theme.mono(10))
-        .foregroundStyle(index == 0 ? theme.foreground.opacity(0.75) : theme.dim)
+        .foregroundStyle(theme.foreground.opacity(0.75))
         .padding(.horizontal, 5)
         .padding(.vertical, 1.5)
-        .background(Capsule().fill(theme.foreground.opacity(index == 0 ? 0.09 : 0.05)))
-        .layoutPriority(index == 0 ? 1 : 0)
-        .transition(.scale(scale: 0.8).combined(with: .opacity))
+        .background(Capsule().fill(theme.foreground.opacity(0.09)))
+
+        if repos.count > 1 {
+          Text("+\(repos.count - 1)")
+            .foregroundStyle(theme.dim)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(theme.foreground.opacity(0.05)))
+            .fixedSize()
+        }
+      }
+      .font(theme.mono(10))
+      .help("Click to show all repos")
+    }
+  }
+}
+
+private struct SessionDetails: View {
+  let session: Session
+  let theme: Theme
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      ForEach(Array(session.repos.enumerated()), id: \.element) { index, repo in
+        RepoLine(repo: repo, primary: index == 0, theme: theme)
       }
 
-      if repos.count > shown.count {
-        Text("+\(repos.count - shown.count)")
-          .font(theme.mono(10))
-          .foregroundStyle(theme.dim)
-          .fixedSize()
+      if let lastTool = session.lastTool, session.detail == nil {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+          Image(systemName: "terminal")
+            .font(.system(size: 8.5, weight: .semibold))
+          Text(lastTool)
+            .lineLimit(3)
+        }
+        .font(theme.mono(10))
+        .foregroundStyle(theme.dim)
+        .padding(.top, 2)
       }
     }
-    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: repos)
+    .padding(.top, 4)
+  }
+}
+
+private struct RepoLine: View {
+  let repo: RepoChip
+  let primary: Bool
+  let theme: Theme
+  @Local private var hovering = false
+
+  private var showsBranch: Bool {
+    guard let branch = repo.branch else { return false }
+    return branch != (repo.label as NSString).lastPathComponent
+  }
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 5) {
+      Image(systemName: primary ? "arrow.triangle.branch" : "folder")
+        .font(.system(size: 8.5, weight: .semibold))
+        .foregroundStyle(primary ? theme.accent : theme.dim)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(repo.label)
+          .foregroundStyle(theme.foreground.opacity(primary ? 0.9 : 0.75))
+        if showsBranch, let branch = repo.branch {
+          Text(branch)
+            .foregroundStyle(theme.dim)
+        }
+      }
+      .lineLimit(2)
+      .truncationMode(.middle)
+      Spacer(minLength: 0)
+      Image(systemName: "arrow.up.forward.square")
+        .font(.system(size: 9))
+        .foregroundStyle(theme.dim)
+        .opacity(hovering ? 1 : 0)
+    }
+    .font(theme.mono(10.5))
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .background(RoundedRectangle(cornerRadius: 6).fill(theme.foreground.opacity(hovering ? 0.08 : 0)))
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 }
+    .onTapGesture {
+      NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.path)])
+    }
+    .help("Show \(repo.path) in Finder")
+    .animation(.easeOut(duration: 0.15), value: hovering)
   }
 }
 

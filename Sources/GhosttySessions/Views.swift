@@ -5,7 +5,6 @@ struct SidebarView: View {
   @ObservedObject var store: SessionStore
   @Namespace private var rows
   @Local private var appeared = false
-  @Local private var expanded: Set<String> = []
 
   private var theme: Theme { store.theme }
   private var order: [String] { store.sessions.map { "\($0.id)-\($0.needsYou)-\($0.idle)" } }
@@ -96,12 +95,10 @@ struct SidebarView: View {
       session: session,
       theme: theme,
       isCurrent: store.focusedID == session.id,
-      expanded: expanded.contains(session.id) || Self.expandAll,
+      expanded: store.expanded.contains(session.id) || Self.expandAll,
       onTap: { store.focus(session) },
       onToggle: {
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
-          if expanded.contains(session.id) { expanded.remove(session.id) } else { expanded.insert(session.id) }
-        }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) { store.toggleExpanded(session.id) }
       }
     )
     .matchedGeometryEffect(id: session.id, in: rows)
@@ -606,10 +603,8 @@ private struct RepoLine: View {
 struct NewSessionCard: View {
   @ObservedObject var store: SessionStore
   @Namespace private var morph
-  @Local private var open = false
   @Local private var folder = ""
   @Local private var name = ""
-  @Local private var prompt = ""
   @Local private var busy = false
   @Local private var failed = false
   @FocusState private var promptFocused: Bool
@@ -618,15 +613,15 @@ struct NewSessionCard: View {
 
   var body: some View {
     ZStack {
-      if open { form } else { button }
+      if store.composerOpen { form } else { button }
     }
-    .animation(.spring(response: 0.45, dampingFraction: 0.82), value: open)
+    .animation(.spring(response: 0.45, dampingFraction: 0.82), value: store.composerOpen)
   }
 
   private var button: some View {
     Button {
       folder = folder.isEmpty ? (store.folders.first ?? "") : folder
-      open = true
+      store.composerOpen = true
       promptFocused = true
     } label: {
       HStack(spacing: 8) {
@@ -656,7 +651,7 @@ struct NewSessionCard: View {
           .foregroundStyle(theme.dim)
       }
 
-      TextField("What should Claude do? (optional)", text: $prompt, axis: .vertical)
+      TextField("What should Claude do? (optional)", text: $store.composerPrompt, axis: .vertical)
         .textFieldStyle(.plain)
         .font(.system(size: 12))
         .lineLimit(2...6)
@@ -727,7 +722,7 @@ struct NewSessionCard: View {
     guard !folder.isEmpty, !busy else { return }
     busy = true
     failed = false
-    let task = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let task = store.composerPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     let label = name.trimmingCharacters(in: .whitespaces)
 
     Task {
@@ -739,9 +734,9 @@ struct NewSessionCard: View {
   }
 
   private func close() {
-    open = false
+    store.composerOpen = false
     name = ""
-    prompt = ""
+    store.composerPrompt = ""
     failed = false
   }
 

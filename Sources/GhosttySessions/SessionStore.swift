@@ -42,8 +42,14 @@ final class SessionStore: ObservableObject {
   @Published private(set) var ghosttyRunning = true
   @Published private(set) var theme = Theme()
   @Published private(set) var folders: [String] = []
+  @Published var expanded: Set<String> = []
+  @Published var composerOpen = false
+  @Published var composerPrompt = ""
 
   var onNeedsYou: ((Session, Bool) -> Void)?
+
+  // Demo mode replaces Ghostty and Claude with a scripted stage.
+  var demo: DemoHandler?
 
   private var history: [String: (state: SessionState, since: Date, attention: Int, seen: Bool)] = [:]
   private var launched: [String: String] = [:]
@@ -67,6 +73,7 @@ final class SessionStore: ObservableObject {
   var idle: [Session] { sessions.filter(\.idle) }
 
   func start() {
+    guard demo == nil else { return }
     queue.async {
       let theme = Theme.load()
       DispatchQueue.main.async { self.theme = theme }
@@ -78,7 +85,21 @@ final class SessionStore: ObservableObject {
   }
 
   func focus(_ session: Session) {
-    queue.async { Ghostty.focus(terminalID: session.id) }
+    if let demo { return demo.focus(session) }
+    queue.async {
+      Ghostty.focus(terminalID: session.id)
+      DispatchQueue.main.async { Ghostty.bringToFront() }
+    }
+  }
+
+  func toggleExpanded(_ id: String) {
+    if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+  }
+
+  func show(sessions: [Session], focusedID: String?, theme: Theme) {
+    self.theme = theme
+    self.sessions = sessions.sorted { (Self.rank($0), $0.since) < (Self.rank($1), $1.since) }
+    self.focusedID = focusedID
   }
 
   func focusLongestWaiting() {
@@ -93,6 +114,7 @@ final class SessionStore: ObservableObject {
   }
 
   func startSession(in folder: String, name: String, prompt: String) async -> Bool {
+    if let demo { return demo.start(prompt: prompt) }
     addFolder(folder)
 
     let sessionID = UUID().uuidString.lowercased()
@@ -273,4 +295,10 @@ final class TranscriptCache: @unchecked Sendable {
     lock.unlock()
     return info
   }
+}
+
+@MainActor
+protocol DemoHandler: AnyObject {
+  func focus(_ session: Session)
+  func start(prompt: String) -> Bool
 }

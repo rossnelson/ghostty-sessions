@@ -68,9 +68,18 @@ enum Ghostty {
     run("""
       tell application id "\(bundleID)"
         focus (first terminal whose id is "\(escape(terminalID))")
-        activate
       end tell
       """)
+  }
+
+  // macOS 14+ only lets an active app hand activation to another app, so this
+  // app activates itself and then yields to Ghostty. Ghostty then gets the keyboard.
+  @MainActor
+  static func bringToFront() {
+    guard let ghostty = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return }
+    NSApp.activate()
+    NSApp.yieldActivation(to: ghostty)
+    ghostty.activate(from: .current, options: [])
   }
 
   static func newTab(cwd: String, input: String, environment: [String]) -> String? {

@@ -188,7 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
   ) {
     let id = response.notification.request.content.userInfo["terminal"] as? String
     if let id {
-      DispatchQueue.global().async { Ghostty.focus(terminalID: id) }
+      DispatchQueue.global().async {
+        Ghostty.focus(terminalID: id)
+        DispatchQueue.main.async { Ghostty.bringToFront() }
+      }
     }
     completionHandler()
   }

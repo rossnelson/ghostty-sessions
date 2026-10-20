@@ -4,6 +4,7 @@ struct GhosttyTerminal: Hashable {
   let id: String
   let title: String
   let cwd: String
+  let tabName: String
 }
 
 struct GhosttySnapshot {
@@ -36,8 +37,13 @@ enum Ghostty {
           set fid to id of focused terminal of selected tab of front window
         end try
         set out to (frontmost as text) & sep & fid & linefeed
-        repeat with t in terminals
-          set out to out & (id of t) & sep & (name of t) & sep & (working directory of t) & linefeed
+        repeat with w in windows
+          repeat with tb in tabs of w
+            set tabName to name of tb
+            repeat with t in terminals of tb
+              set out to out & (id of t) & sep & (name of t) & sep & (working directory of t) & sep & tabName & linefeed
+            end repeat
+          end repeat
         end repeat
         return out
       end tell
@@ -92,7 +98,8 @@ enum Ghostty {
   private static func parseTerminal(_ line: String) -> GhosttyTerminal? {
     let parts = line.components(separatedBy: "\t")
     guard parts.count >= 3 else { return nil }
-    return GhosttyTerminal(id: parts[0], title: parts[1], cwd: parts[2])
+    let tabName = parts.count > 3 ? parts[3] : parts[1]
+    return GhosttyTerminal(id: parts[0], title: parts[1], cwd: parts[2], tabName: tabName)
   }
 
   private static func escape(_ value: String) -> String {

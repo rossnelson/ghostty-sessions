@@ -257,8 +257,18 @@ struct SessionRow: View {
           .lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
 
-        if !session.repos.isEmpty {
-          RepoChips(repos: session.repos, theme: theme)
+        if let claudeTitle = session.claudeTitle {
+          Text(claudeTitle)
+            .font(.system(size: 10.5))
+            .foregroundStyle(theme.dim)
+            .lineLimit(1)
+        }
+
+        if !session.repos.isEmpty || session.shellRunning {
+          HStack(spacing: 4) {
+            if session.shellRunning { ShellBadge(theme: theme) }
+            RepoChips(repos: session.repos, theme: theme)
+          }
         }
 
         if let detail = session.detail {
@@ -423,6 +433,28 @@ private struct Shimmer: View {
       progress = -0.5
       withAnimation(.easeInOut(duration: 0.9)) { progress = 1.5 }
     }
+  }
+}
+
+// Claude finished its turn, but a background shell it started is still running.
+private struct ShellBadge: View {
+  let theme: Theme
+
+  var body: some View {
+    TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+      let phase = (sin(context.date.timeIntervalSinceReferenceDate * 3) + 1) / 2
+      HStack(spacing: 3) {
+        Circle().fill(theme.success).frame(width: 5, height: 5).opacity(0.4 + 0.6 * phase)
+        Text("shell")
+      }
+    }
+    .font(theme.mono(10))
+    .foregroundStyle(theme.success)
+    .padding(.horizontal, 5)
+    .padding(.vertical, 1.5)
+    .background(Capsule().fill(theme.success.opacity(0.12)))
+    .fixedSize()
+    .help("A background shell is still running")
   }
 }
 

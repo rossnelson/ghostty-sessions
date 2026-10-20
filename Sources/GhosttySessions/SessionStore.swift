@@ -19,6 +19,8 @@ struct RepoChip: Hashable {
 struct Session: Identifiable, Equatable {
   let id: String
   var title: String
+  var claudeTitle: String?
+  var shellRunning: Bool
   var cwd: String
   var repos: [RepoChip]
   var state: SessionState
@@ -161,9 +163,13 @@ final class SessionStore: ObservableObject {
       history[terminal.id] = (state, since, attention, seen)
 
       let root = Self.root(for: process?.cwd ?? terminal.cwd, folders: folders)
+      let claudeTitle = title.isEmpty ? (info?.title ?? "Claude") : title
+      let customName = terminal.tabName != terminal.title && !terminal.tabName.isEmpty
       let session = Session(
         id: terminal.id,
-        title: title.isEmpty ? (info?.title ?? "Claude") : title,
+        title: customName ? terminal.tabName : claudeTitle,
+        claudeTitle: customName ? claudeTitle : nil,
+        shellRunning: process?.status == "shell",
         cwd: terminal.cwd,
         repos: chips(for: info?.repos ?? [], root: root, cwd: process?.cwd ?? terminal.cwd),
         state: state,
@@ -233,8 +239,8 @@ final class SessionStore: ObservableObject {
   private func state(for process: ClaudeProcess?, glyph: Character) -> SessionState {
     switch process?.status {
     case "waiting": return .needsPermission
-    case "idle": return .yourTurn
-    case "busy", "shell": return .working
+    case "idle", "shell": return .yourTurn
+    case "busy": return .working
     default: return Self.idleGlyphs.contains(glyph) ? .yourTurn : .working
     }
   }

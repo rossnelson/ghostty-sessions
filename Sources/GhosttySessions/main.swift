@@ -21,6 +21,6 @@ func dump() {
     let title = String(terminal.title.dropFirst()).trimmingCharacters(in: .whitespaces)
     let process = processes.first { titles[$0.sessionID]?.title == title || $0.name == title }
     let info = process.flatMap { titles[$0.sessionID] }
-    print("\(terminal.title.prefix(45).padding(toLength: 45, withPad: " ", startingAt: 0))  \(process?.status ?? "-")\t\(info?.repos.joined(separator: ", ") ?? "")\t\(info?.pendingTool ?? "")")
+    print("\(terminal.tabName.prefix(25).padding(toLength: 25, withPad: " ", startingAt: 0)) \(terminal.title.prefix(45).padding(toLength: 45, withPad: " ", startingAt: 0))  \(process?.status ?? "-")\t\(info?.repos.joined(separator: ", ") ?? "")\t\(info?.pendingTool ?? "")")
   }
 }

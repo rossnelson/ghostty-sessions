@@ -6,7 +6,12 @@ if CommandLine.arguments.contains("--dump") {
 }
 
 let app = NSApplication.shared
-let delegate = MainActor.assumeIsolated { AppDelegate() }
+let delegate: NSApplicationDelegate = MainActor.assumeIsolated {
+  if let index = CommandLine.arguments.firstIndex(of: "--demo"), CommandLine.arguments.count > index + 1 {
+    return DemoAppDelegate(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+  }
+  return AppDelegate()
+}
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()

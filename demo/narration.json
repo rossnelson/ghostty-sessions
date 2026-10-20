@@ -1,0 +1,48 @@
+{
+  "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+  "model_id": "eleven_multilingual_v2",
+  "lead": 0.5,
+  "tail": 0.8,
+  "scenes": [
+    {
+      "id": "intro",
+      "min": 8,
+      "text": "This is Ghostty Sessions. It's a small panel that sits next to Ghostty and keeps track of every Claude Code session you have open."
+    },
+    {
+      "id": "states",
+      "min": 9,
+      "text": "Each row is one session. A turning ring means Claude is still working. When Claude finishes, the row moves up to Needs you, so you know it's your turn."
+    },
+    {
+      "id": "permission",
+      "min": 9,
+      "text": "If Claude stops to ask for permission, the row turns red and shows the exact command it wants to run. You also get a notification, and the menu bar shows the count."
+    },
+    {
+      "id": "jump",
+      "min": 6,
+      "text": "Click a row, and Ghostty jumps straight to that tab, ready for you to type. Once you've seen it, the session moves down to Idle."
+    },
+    {
+      "id": "hotkey",
+      "min": 6,
+      "text": "Or press Control, Option, Space from anywhere, to jump to the session that has waited longest."
+    },
+    {
+      "id": "expand",
+      "min": 8,
+      "text": "Sessions start in your code folder and move between repos. Expand a card to see every repo it touched, and the branch in each one."
+    },
+    {
+      "id": "new",
+      "min": 9,
+      "text": "To start something new, type the task right here. Ghostty Sessions opens a new tab, and Claude gets to work."
+    },
+    {
+      "id": "outro",
+      "min": 7,
+      "text": "And Ghostty itself stays untouched. There's no fork. Ghostty Sessions only uses Ghostty's own scripting, so every Ghostty update just works."
+    }
+  ]
+}

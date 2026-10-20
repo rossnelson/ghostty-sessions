@@ -101,6 +101,7 @@ struct SidebarView: View {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) { store.toggleExpanded(session.id) }
       }
     )
+    .stageFrame("row-\(session.id)")
     .matchedGeometryEffect(id: session.id, in: rows)
     .transition(
       .asymmetric(
@@ -317,6 +318,7 @@ struct SessionRow: View {
           }
           .contentShape(Rectangle())
           .onTapGesture(perform: onToggle)
+          .stageFrame("chips-\(session.id)")
         }
 
 
@@ -639,6 +641,7 @@ struct NewSessionCard: View {
       )
     }
     .buttonStyle(.plain)
+    .stageFrame("new")
   }
 
   private var form: some View {
@@ -658,6 +661,7 @@ struct NewSessionCard: View {
         .padding(9)
         .background(RoundedRectangle(cornerRadius: 9).fill(theme.foreground.opacity(0.07)))
         .focused($promptFocused)
+        .stageFrame("prompt")
 
       HStack(spacing: 6) {
         TextField("name", text: $name)
@@ -707,6 +711,7 @@ struct NewSessionCard: View {
       }
       .buttonStyle(.plain)
       .keyboardShortcut(.return, modifiers: .command)
+      .stageFrame("start")
       .disabled(folder.isEmpty || busy)
     }
     .padding(14)

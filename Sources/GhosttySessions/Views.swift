@@ -9,6 +9,11 @@ struct SidebarView: View {
   private var theme: Theme { store.theme }
   private var order: [String] { store.sessions.map { "\($0.id)-\($0.needsYou)-\($0.idle)" } }
 
+  // The outline of the panel: a standard window's corners on all four sides.
+  private var panelShape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: theme.windowRadius, style: .continuous)
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       Header(store: store)
@@ -30,10 +35,10 @@ struct SidebarView: View {
     }
     .foregroundStyle(theme.foreground)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(PanelBackground(theme: theme))
-    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    .background(PanelBackground(theme: theme, shape: panelShape))
+    .clipShape(panelShape)
     .overlay(
-      RoundedRectangle(cornerRadius: 24, style: .continuous)
+      panelShape
         .strokeBorder(
           LinearGradient(
             colors: [theme.foreground.opacity(0.25), theme.foreground.opacity(0.04)],
@@ -114,13 +119,20 @@ struct SidebarView: View {
 
 private struct PanelBackground: View {
   let theme: Theme
+  let shape: RoundedRectangle
 
   var body: some View {
     ZStack {
-      if #available(macOS 26.0, *) {
-        Color.clear.glassEffect(.regular.tint(theme.background.opacity(0.55)), in: .rect(cornerRadius: 24))
+      // The same background as the terminal: Ghostty's colour at Ghostty's
+      // opacity. Opaque by default, glass only when Ghostty is translucent.
+      if theme.backgroundOpacity >= 0.999 {
+        theme.background
+      } else if #available(macOS 26.0, *) {
+        Color.clear.glassEffect(
+          .regular.tint(theme.background.opacity(theme.backgroundOpacity)),
+          in: shape)
       } else {
-        VisualEffect().overlay(theme.background.opacity(0.7))
+        VisualEffect().overlay(theme.background.opacity(theme.backgroundOpacity))
       }
 
       // A slow drifting glow keeps the glass from feeling flat.

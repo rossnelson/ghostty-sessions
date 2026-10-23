@@ -29,10 +29,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
   private var panel: SidebarPanel!
   private var statusItem: NSStatusItem!
   private var hotKeys: [HotKey] = []
+
+  private static let ghosttyBundleID = "com.mitchellh.ghostty"
+  private static let followKey = "followsGhosttyFocus"
+
+  /// Show the panel while Ghostty is frontmost and hide it otherwise. The panel
+  /// is only useful next to a terminal, so this is on unless it is turned off.
+  private var followsGhostty: Bool {
+    get {
+      UserDefaults.standard.object(forKey: Self.followKey) as? Bool ?? true
+    }
+    set {
+      UserDefaults.standard.set(newValue, forKey: Self.followKey)
+      followItem?.state = newValue ? .on : .off
+      if newValue { syncPanelToFrontmostApp() }
+    }
+  }
+  private var followItem: NSMenuItem?
   private var cancellable: Any?
 
   private let width: CGFloat = 310
-  private let margin: CGFloat = 10
+  // How far past the screen edge the panel parks while hidden.
+  private let slide: CGFloat = 10
   private let displayMenu = NSMenu()
 
   private var displayName: String? {
@@ -55,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     buildStatusItem()
     registerHotKeys()
     setUpNotifications()
+    observeAppFocus()
 
     store.onNeedsYou = { [weak self] session, looking in
       self?.updateBadge()
@@ -105,13 +124,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
   private func targetFrame(visible: Bool) -> NSRect {
     let area = screen.visibleFrame
+    // Visible, the panel is flush against its edge and full height between
+    // the menu bar and the Dock. Hidden, it parks just past the edge.
     let x = switch (edge, visible) {
-    case (.right, true): area.maxX - width - margin
-    case (.right, false): area.maxX + margin
-    case (.left, true): area.minX + margin
-    case (.left, false): area.minX - width - margin
+    case (.right, true): area.maxX - width
+    case (.right, false): area.maxX + slide
+    case (.left, true): area.minX
+    case (.left, false): area.minX - width - slide
     }
-    return NSRect(x: x, y: area.minY + margin, width: width, height: area.height - margin * 2)
+    return NSRect(x: x, y: area.minY, width: width, height: area.height)
   }
 
   // After a drag, the panel docks to the nearer edge of the display it was dropped on.
@@ -186,6 +207,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
   }
 
+  private func observeAppFocus() {
+    NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+    ) { [weak self] note in
+      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+      Task { @MainActor in self?.appBecameActive(app?.bundleIdentifier) }
+    }
+    syncPanelToFrontmostApp()
+  }
+
+  private func syncPanelToFrontmostApp() {
+    appBecameActive(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+  }
+
+  private func appBecameActive(_ bundleID: String?) {
+    guard followsGhostty else { return }
+    // Our own activation is not a reason to hide: clicking the panel, the menu
+    // bar item, or the new-session form makes this app frontmost, and hiding
+    // there would close the panel the moment it is used.
+    guard bundleID != Bundle.main.bundleIdentifier else { return }
+
+    let visible = panel.isVisible && panel.alphaValue > 0
+    if bundleID == Self.ghosttyBundleID {
+      if !visible { showPanel() }
+    } else if visible {
+      hidePanel()
+    }
+  }
+
+  @objc private func toggleFollowsGhostty() {
+    followsGhostty.toggle()
+  }
+
   @objc private func togglePanel() {
     panel.isVisible && panel.alphaValue > 0 ? hidePanel() : showPanel()
   }
@@ -206,7 +260,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     statusItem.button?.imagePosition = .imageLeading
 
     let menu = NSMenu()
-    menu.addItem(item("Show or Hide Panel", #selector(togglePanel), key: ""))
+    let toggle = item("Show or Hide Panel", #selector(togglePanel), key: "s")
+    toggle.keyEquivalentModifierMask = [.control, .option]
+    if HotKey.failed.contains(2) {
+      toggle.keyEquivalent = ""
+      toggle.toolTip = "⌃⌥S is taken by another app, so the global shortcut is off."
+    }
+    menu.addItem(toggle)
+    let follow = item("Show With Ghostty", #selector(toggleFollowsGhostty), key: "")
+    follow.state = followsGhostty ? .on : .off
+    follow.toolTip = "Show the panel while Ghostty is frontmost, and hide it otherwise."
+    followItem = follow
+    menu.addItem(follow)
     menu.addItem(item("New Session…", #selector(newSession), key: "n"))
     let displays = NSMenuItem(title: "Move to Display", action: nil, keyEquivalent: "")
     displayMenu.delegate = self
@@ -310,13 +375,25 @@ final class HotKey {
   private var ref: EventHotKeyRef?
   nonisolated(unsafe) private static var handlers: [UInt32: () -> Void] = [:]
   nonisolated(unsafe) private static var installed = false
+  /// Ids whose RegisterEventHotKey call was refused, so the menu can show it.
+  nonisolated(unsafe) static var failed: Set<UInt32> = []
 
   init(id: UInt32, keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) {
     HotKey.handlers[id] = handler
     HotKey.installHandler()
 
     let hotKeyID = EventHotKeyID(signature: OSType(0x4753_4553), id: id)
-    RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+    // RegisterEventHotKey fails when another app already owns the combination.
+    // Swallowing the status leaves a hotkey that silently never fires, which
+    // reads as "the app has no hotkey" rather than "something else took it".
+    let status = RegisterEventHotKey(
+      keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+    if status != noErr {
+      HotKey.failed.insert(id)
+      FileHandle.standardError.write(
+        "hotkey \(id) not registered (OSStatus \(status)) — another app likely owns it\n"
+          .data(using: .utf8)!)
+    }
   }
 
   deinit {

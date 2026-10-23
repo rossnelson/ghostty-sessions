@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct Theme {
@@ -13,6 +14,26 @@ struct Theme {
     8: Color(hex: "#414868"),
   ]
   var fontFamily: String?
+  // Ghostty's background-opacity. 1 is Ghostty's default, an opaque window.
+  var backgroundOpacity: Double = 1
+
+  // The corner radius AppKit gives a standard titled window on this Mac, read
+  // once from a throwaway window's theme frame (16 on macOS 26.5). The key is
+  // private, so it is checked first and a fixed value stands in when it is gone.
+  static let standardWindowRadius: CGFloat = {
+    let probe = NSWindow(
+      contentRect: NSRect(x: -10_000, y: -10_000, width: 10, height: 10),
+      styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+    if let frame = probe.contentView?.superview as NSObject?,
+       frame.responds(to: Selector(("_cornerRadius"))),
+       let radius = frame.value(forKey: "_cornerRadius") as? CGFloat, radius > 0 {
+      return radius
+    }
+    if #available(macOS 26.0, *) { return 16 }
+    return 10
+  }()
+
+  var windowRadius: CGFloat { Self.standardWindowRadius }
 
   var working: Color { palette[4] ?? .blue }
   var waiting: Color { palette[3] ?? .yellow }
@@ -54,6 +75,9 @@ struct Theme {
   private static func apply(key: String, value: String, to theme: inout Theme) {
     if key == "background" { theme.background = Color(hex: value) }
     if key == "foreground" { theme.foreground = Color(hex: value) }
+    if key == "background-opacity", let opacity = Double(value) {
+      theme.backgroundOpacity = min(max(opacity, 0), 1)
+    }
     if key == "font-family", theme.fontFamily == nil, !value.isEmpty {
       theme.fontFamily = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
     }

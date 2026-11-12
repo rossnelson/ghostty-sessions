@@ -34,16 +34,13 @@ struct SidebarView: View {
         .padding(10)
     }
     .foregroundStyle(theme.foreground)
+    .font(theme.mono(theme.body))
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(PanelBackground(theme: theme, shape: panelShape))
     .clipShape(panelShape)
     .overlay(
       panelShape
-        .strokeBorder(
-          LinearGradient(
-            colors: [theme.foreground.opacity(0.25), theme.foreground.opacity(0.04)],
-            startPoint: .top, endPoint: .bottom),
-          lineWidth: 1)
+        .strokeBorder(theme.rule.opacity(0.8), lineWidth: 1)
     )
     .opacity(appeared ? 1 : 0)
     .offset(x: appeared ? 0 : 40)
@@ -63,7 +60,7 @@ struct SidebarView: View {
     }
 
     if !store.waiting.isEmpty {
-      SectionLabel(title: "Needs you", count: store.waiting.count, color: theme.waiting)
+      SectionLabel(title: "Needs you", count: store.waiting.count, color: theme.waiting, theme: theme)
         .transition(.opacity)
     }
 
@@ -72,7 +69,7 @@ struct SidebarView: View {
     }
 
     if !store.working.isEmpty {
-      SectionLabel(title: "Working", count: store.working.count, color: theme.working)
+      SectionLabel(title: "Working", count: store.working.count, color: theme.working, theme: theme)
         .padding(.top, store.waiting.isEmpty ? 0 : 10)
         .transition(.opacity)
     }
@@ -82,7 +79,7 @@ struct SidebarView: View {
     }
 
     if !store.idle.isEmpty {
-      SectionLabel(title: "Idle", count: store.idle.count, color: theme.dim)
+      SectionLabel(title: "Idle", count: store.idle.count, color: theme.dim, theme: theme)
         .padding(.top, 10)
         .transition(.opacity)
     }
@@ -186,21 +183,19 @@ private struct Header: View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: 2) {
         Text("Sessions")
-          .font(.system(size: 20, weight: .semibold, design: .rounded))
-        HStack(spacing: 8) {
+          .font(theme.mono(theme.fontSize + 3, weight: .bold))
+        HStack(spacing: 6) {
           Stat(value: store.waiting.count, label: "waiting", color: theme.waiting)
+          Text("·")
           Stat(value: store.working.count, label: "working", color: theme.working)
         }
-        .font(theme.mono(11))
+        .font(theme.mono(theme.small))
         .foregroundStyle(theme.dim)
       }
       Spacer()
       Text("⌃⌥Space")
-        .font(theme.mono(10))
+        .font(theme.mono(theme.small))
         .foregroundStyle(theme.dim)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(theme.foreground.opacity(0.08)))
         .help("Jump to the session that has waited longest")
     }
     .background(DragHandle().padding(-18))
@@ -214,7 +209,7 @@ private struct Stat: View {
 
   var body: some View {
     HStack(spacing: 4) {
-      Circle().fill(color).frame(width: 5, height: 5)
+      Text("●").foregroundStyle(color)
       Text("\(value)")
         .contentTransition(.numericText(value: Double(value)))
         .animation(.spring, value: value)
@@ -227,17 +222,20 @@ private struct SectionLabel: View {
   let title: String
   let count: Int
   let color: Color
+  let theme: Theme
 
   var body: some View {
-    HStack(spacing: 6) {
-      Text(title.uppercased())
-        .font(.system(size: 10, weight: .bold, design: .rounded))
-        .tracking(1.2)
+    HStack(spacing: 8) {
+      Text(title)
+        .font(theme.mono(theme.small, weight: .bold))
+        .foregroundStyle(color)
+      Text("\(count)")
+        .font(theme.mono(theme.small))
+        .foregroundStyle(theme.dim)
       Rectangle()
-        .fill(LinearGradient(colors: [color.opacity(0.5), .clear], startPoint: .leading, endPoint: .trailing))
+        .fill(theme.rule.opacity(0.7))
         .frame(height: 1)
     }
-    .foregroundStyle(color)
     .padding(.horizontal, 8)
     .padding(.top, 6)
     .padding(.bottom, 2)
@@ -252,12 +250,12 @@ private struct EmptyState: View {
     VStack(spacing: 10) {
       TimelineView(.animation(minimumInterval: 1 / 30)) { context in
         Text("✳")
-          .font(.system(size: 34))
+          .font(theme.mono(34))
           .foregroundStyle(theme.accent.opacity(0.6))
           .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate * 12))
       }
       Text(text)
-        .font(theme.mono(12))
+        .font(theme.mono(theme.body))
         .foregroundStyle(theme.dim)
     }
     .frame(maxWidth: .infinity)
@@ -299,11 +297,14 @@ struct SessionRow: View {
     .padding(.vertical, session.idle && !expanded ? 7 : 10)
     .background(rowBackground)
     .overlay(Shimmer(trigger: session.attention, color: color))
-    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .strokeBorder(color.opacity(isCurrent ? 0.55 : 0), lineWidth: 1)
-    )
+    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+    .overlay(alignment: .leading) {
+      // The current tab gets a bar in its state colour, like a gutter mark.
+      Rectangle()
+        .fill(color)
+        .frame(width: 2)
+        .opacity(isCurrent ? 1 : 0)
+    }
     .contentShape(Rectangle())
     .scaleEffect(hovering && !expanded ? 1.015 : 1)
     .keyframeAnimator(initialValue: 1.0, trigger: session.attention) { content, scale in
@@ -328,14 +329,14 @@ struct SessionRow: View {
 
       VStack(alignment: .leading, spacing: 3) {
         Text(session.title)
-          .font(.system(size: 12.5, weight: .medium))
+          .font(theme.mono(theme.body, weight: session.idle ? .regular : .bold))
           .foregroundStyle(session.idle ? theme.foreground.opacity(0.7) : theme.foreground)
           .lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
 
         if let claudeTitle = session.claudeTitle {
           Text(claudeTitle)
-            .font(.system(size: 10.5))
+            .font(theme.mono(theme.small))
             .foregroundStyle(theme.dim)
             .lineLimit(1)
         }
@@ -352,8 +353,8 @@ struct SessionRow: View {
 
 
         if let detail = session.detail {
-          Text(detail)
-            .font(.system(size: 10.5, weight: .medium))
+          Text("⎿  \(detail)")
+            .font(theme.mono(theme.small))
             .foregroundStyle(theme.permission)
             .lineLimit(2)
             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -365,8 +366,8 @@ struct SessionRow: View {
       VStack(alignment: .trailing, spacing: 6) {
         Elapsed(since: session.since, theme: theme)
         Button(action: onToggle) {
-          Image(systemName: "chevron.down")
-            .font(.system(size: 9, weight: .bold))
+          Text("▾")
+            .font(theme.mono(theme.small))
             .rotationEffect(.degrees(expanded ? 180 : 0))
             .frame(width: 18, height: 14)
             .contentShape(Rectangle())
@@ -381,8 +382,8 @@ struct SessionRow: View {
 
   private var rowBackground: some View {
     ZStack {
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(theme.foreground.opacity(hovering ? 0.09 : (isCurrent ? 0.06 : 0.025)))
+      Rectangle()
+        .fill(isCurrent ? theme.highlight : theme.foreground.opacity(hovering ? 0.05 : 0))
       if session.needsYou {
         LinearGradient(colors: [color.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing)
       }
@@ -463,7 +464,7 @@ private struct Elapsed: View {
     TimelineView(.periodic(from: .now, by: 1)) { context in
       let text = Self.format(context.date.timeIntervalSince(since))
       Text(text)
-        .font(theme.mono(10.5))
+        .font(theme.mono(theme.small))
         .foregroundStyle(theme.dim)
         .contentTransition(.numericText())
         .animation(.snappy, value: text)
@@ -515,11 +516,8 @@ private struct ShellBadge: View {
         Text("shell")
       }
     }
-    .font(theme.mono(10))
+    .font(theme.mono(theme.small))
     .foregroundStyle(theme.success)
-    .padding(.horizontal, 5)
-    .padding(.vertical, 1.5)
-    .background(Capsule().fill(theme.success.opacity(0.12)))
     .fixedSize()
     .help("A background shell is still running")
   }
@@ -532,28 +530,18 @@ private struct RepoChips: View {
   var body: some View {
     if let first = repos.first {
       HStack(spacing: 4) {
-        HStack(spacing: 3) {
-          Image(systemName: "arrow.triangle.branch")
-            .font(.system(size: 8, weight: .semibold))
-          Text((first.label as NSString).lastPathComponent)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-        .foregroundStyle(theme.foreground.opacity(0.75))
-        .padding(.horizontal, 5)
-        .padding(.vertical, 1.5)
-        .background(Capsule().fill(theme.foreground.opacity(0.09)))
+        Text((first.label as NSString).lastPathComponent)
+          .foregroundStyle(theme.accent)
+          .lineLimit(1)
+          .truncationMode(.middle)
 
         if repos.count > 1 {
           Text("+\(repos.count - 1)")
             .foregroundStyle(theme.dim)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1.5)
-            .background(Capsule().fill(theme.foreground.opacity(0.05)))
             .fixedSize()
         }
       }
-      .font(theme.mono(10))
+      .font(theme.mono(theme.small))
       .help("Click to show all repos")
     }
   }
@@ -570,13 +558,12 @@ private struct SessionDetails: View {
       }
 
       if let lastTool = session.lastTool, session.detail == nil {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-          Image(systemName: "terminal")
-            .font(.system(size: 8.5, weight: .semibold))
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Text("⎿")
           Text(lastTool)
             .lineLimit(3)
         }
-        .font(theme.mono(10))
+        .font(theme.mono(theme.small))
         .foregroundStyle(theme.dim)
         .padding(.top, 2)
       }
@@ -598,12 +585,11 @@ private struct RepoLine: View {
 
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 5) {
-      Image(systemName: primary ? "arrow.triangle.branch" : "folder")
-        .font(.system(size: 8.5, weight: .semibold))
+      Text(primary ? "●" : "○")
         .foregroundStyle(primary ? theme.accent : theme.dim)
       VStack(alignment: .leading, spacing: 1) {
         Text(repo.label)
-          .foregroundStyle(theme.foreground.opacity(primary ? 0.9 : 0.75))
+          .foregroundStyle(primary ? theme.accent : theme.foreground.opacity(0.75))
         if showsBranch, let branch = repo.branch {
           Text(branch)
             .foregroundStyle(theme.dim)
@@ -612,15 +598,14 @@ private struct RepoLine: View {
       .lineLimit(2)
       .truncationMode(.middle)
       Spacer(minLength: 0)
-      Image(systemName: "arrow.up.forward.square")
-        .font(.system(size: 9))
+      Text("↗")
         .foregroundStyle(theme.dim)
         .opacity(hovering ? 1 : 0)
     }
-    .font(theme.mono(10.5))
+    .font(theme.mono(theme.small))
     .padding(.horizontal, 6)
     .padding(.vertical, 3)
-    .background(RoundedRectangle(cornerRadius: 6).fill(theme.foreground.opacity(hovering ? 0.08 : 0)))
+    .background(Rectangle().fill(theme.foreground.opacity(hovering ? 0.08 : 0)))
     .contentShape(Rectangle())
     .onHover { hovering = $0 }
     .onTapGesture {
@@ -656,16 +641,17 @@ struct NewSessionCard: View {
       promptFocused = true
     } label: {
       HStack(spacing: 8) {
-        Image(systemName: "plus")
-          .font(.system(size: 12, weight: .bold))
+        Text("❯")
         Text("New session")
-          .font(.system(size: 12.5, weight: .semibold))
+          .foregroundStyle(theme.dim)
+        Spacer()
       }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 11)
+      .font(theme.mono(theme.body))
+      .padding(.horizontal, 10)
+      .padding(.vertical, 10)
+      .contentShape(Rectangle())
       .background(
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-          .fill(LinearGradient(colors: [theme.accent.opacity(0.35), theme.working.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        PromptBox(theme: theme)
           .matchedGeometryEffect(id: "card", in: morph)
       )
     }
@@ -676,28 +662,32 @@ struct NewSessionCard: View {
   private var form: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack {
-        Text("New session").font(.system(size: 13, weight: .semibold))
+        Text("New session").font(theme.mono(theme.body, weight: .bold))
         Spacer()
-        Button { close() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
+        Button { close() } label: { Text("esc").font(theme.mono(theme.small)) }
           .buttonStyle(.plain)
           .foregroundStyle(theme.dim)
       }
 
-      TextField("What should Claude do? (optional)", text: $store.composerPrompt, axis: .vertical)
-        .textFieldStyle(.plain)
-        .font(.system(size: 12))
-        .lineLimit(2...6)
-        .padding(9)
-        .background(RoundedRectangle(cornerRadius: 9).fill(theme.foreground.opacity(0.07)))
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Text("❯")
+        TextField("What should Claude do? (optional)", text: $store.composerPrompt, axis: .vertical)
+          .textFieldStyle(.plain)
+          .lineLimit(2...6)
+      }
+      .font(theme.mono(theme.body))
+      .padding(.vertical, 8)
+      .overlay(alignment: .top) { Rectangle().fill(theme.rule).frame(height: 1) }
+      .overlay(alignment: .bottom) { Rectangle().fill(theme.rule).frame(height: 1) }
         .focused($promptFocused)
         .stageFrame("prompt")
 
       HStack(spacing: 6) {
         TextField("name", text: $name)
           .textFieldStyle(.plain)
-          .font(theme.mono(11))
-          .padding(7)
-          .background(RoundedRectangle(cornerRadius: 9).fill(theme.foreground.opacity(0.07)))
+          .font(theme.mono(theme.small))
+          .padding(6)
+          .overlay(Rectangle().strokeBorder(theme.rule, lineWidth: 1))
 
         Menu {
           ForEach(store.folders, id: \.self) { path in
@@ -706,13 +696,12 @@ struct NewSessionCard: View {
           Divider()
           Button("Choose folder…", action: chooseFolder)
         } label: {
-          HStack(spacing: 4) {
-            Image(systemName: "folder").font(.system(size: 9))
-            Text((folder as NSString).lastPathComponent).lineLimit(1)
-          }
-          .font(theme.mono(11))
-          .padding(7)
-          .background(RoundedRectangle(cornerRadius: 9).fill(theme.foreground.opacity(0.07)))
+          Text("\((folder as NSString).lastPathComponent) ▾")
+            .lineLimit(1)
+            .foregroundStyle(theme.accent)
+            .font(theme.mono(theme.small))
+            .padding(6)
+            .overlay(Rectangle().strokeBorder(theme.rule, lineWidth: 1))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -721,7 +710,7 @@ struct NewSessionCard: View {
 
       if failed {
         Text("Ghostty did not open a tab. Allow Automation for Ghostty Sessions in System Settings.")
-          .font(.system(size: 10.5))
+          .font(theme.mono(theme.small))
           .foregroundStyle(theme.permission)
           .transition(.opacity)
       }
@@ -731,22 +720,22 @@ struct NewSessionCard: View {
           if busy {
             ProgressView().controlSize(.small)
           } else {
-            Text("Start Claude  ⌘↩").font(.system(size: 12, weight: .semibold))
+            Text("Start Claude  ⌘↩").font(theme.mono(theme.body, weight: .bold))
           }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 10).fill(theme.accent.opacity(0.45)))
+        .foregroundStyle(theme.background)
+        .background(Rectangle().fill(theme.accent))
       }
       .buttonStyle(.plain)
       .keyboardShortcut(.return, modifiers: .command)
       .stageFrame("start")
       .disabled(folder.isEmpty || busy)
     }
-    .padding(14)
+    .padding(12)
     .background(
-      RoundedRectangle(cornerRadius: 16, style: .continuous)
-        .fill(theme.foreground.opacity(0.06))
+      PromptBox(theme: theme)
         .matchedGeometryEffect(id: "card", in: morph)
     )
     .animation(.easeInOut(duration: 0.2), value: failed)
@@ -786,5 +775,17 @@ struct NewSessionCard: View {
 
   private func abbreviate(_ path: String) -> String {
     (path as NSString).abbreviatingWithTildeInPath
+  }
+}
+
+// The box around Claude Code's prompt: a faint fill between two rules.
+private struct PromptBox: View {
+  let theme: Theme
+
+  var body: some View {
+    Rectangle()
+      .fill(theme.foreground.opacity(0.04))
+      .overlay(alignment: .top) { Rectangle().fill(theme.rule).frame(height: 1) }
+      .overlay(alignment: .bottom) { Rectangle().fill(theme.rule).frame(height: 1) }
   }
 }

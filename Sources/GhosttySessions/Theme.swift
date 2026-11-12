@@ -14,6 +14,9 @@ struct Theme {
     8: Color(hex: "#414868"),
   ]
   var fontFamily: String?
+  // Ghostty's font-size. 13 is Ghostty's default on macOS.
+  var fontSize: CGFloat = 13
+  var selectionBackground: Color?
   // Ghostty's background-opacity. 1 is Ghostty's default, an opaque window.
   var backgroundOpacity: Double = 1
 
@@ -41,6 +44,15 @@ struct Theme {
   var accent: Color { palette[5] ?? .purple }
   var success: Color { palette[2] ?? .green }
   var dim: Color { foreground.opacity(0.55) }
+  // The colour of the rules that Claude Code draws around its prompt.
+  var rule: Color { palette[8] ?? foreground.opacity(0.3) }
+  // The bar behind the current row: the colour Claude Code uses for a sent prompt.
+  var highlight: Color { foreground.opacity(0.09) }
+  var selection: Color { selectionBackground ?? accent.opacity(0.3) }
+
+  // Text sizes relative to Ghostty's font-size, so the panel scales with the terminal.
+  var body: CGFloat { max(fontSize - 0.5, 10) }
+  var small: CGFloat { max(fontSize - 2, 9) }
 
   func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
     guard let fontFamily else { return .system(size: size, weight: weight, design: .monospaced) }
@@ -77,6 +89,12 @@ struct Theme {
     if key == "foreground" { theme.foreground = Color(hex: value) }
     if key == "background-opacity", let opacity = Double(value) {
       theme.backgroundOpacity = min(max(opacity, 0), 1)
+    }
+    if key == "font-size", let size = Double(value), size > 0 {
+      theme.fontSize = CGFloat(size)
+    }
+    if key == "selection-background", !value.isEmpty {
+      theme.selectionBackground = Color(hex: value)
     }
     if key == "font-family", theme.fontFamily == nil, !value.isEmpty {
       theme.fontFamily = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))

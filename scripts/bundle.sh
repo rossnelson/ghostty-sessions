@@ -29,5 +29,15 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-codesign --force --sign - "$app"
+# macOS ties the Accessibility and Automation permissions to the signature. An
+# ad-hoc signature changes on every build, so each rebuild would ask again. A
+# stable local certificate keeps them. Order: GHOSTTY_SESSIONS_SIGN_IDENTITY,
+# then a local "Sidebar Local Signing" certificate, then ad hoc.
+identity="${GHOSTTY_SESSIONS_SIGN_IDENTITY:-}"
+if [[ -z $identity ]]; then
+  identity=$(security find-identity -p codesigning 2>/dev/null \
+    | awk '/"Sidebar Local Signing"/ { print $2; exit }')
+fi
+codesign --force --sign "${identity:--}" --identifier dev.local.ghostty-sessions "$app"
+[[ -n $identity ]] && echo "Signed with $identity" || echo "Signed ad hoc"
 echo "Built $app"

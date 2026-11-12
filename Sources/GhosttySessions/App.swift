@@ -46,6 +46,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
   }
   private var followItem: NSMenuItem?
+
+  private static let makeRoomKey = "makesRoomInGhostty"
+  private let ghosttyWindows = GhosttyWindows()
+  private var panelShown = false
+
+  /// Narrow Ghostty's windows so they stop at the panel instead of under it.
+  private var makesRoom: Bool {
+    get { UserDefaults.standard.object(forKey: Self.makeRoomKey) as? Bool ?? true }
+    set {
+      UserDefaults.standard.set(newValue, forKey: Self.makeRoomKey)
+      makeRoomItem?.state = newValue ? .on : .off
+      if newValue {
+        _ = GhosttyWindows.isTrusted(prompt: true)
+        ghosttyWindows.fit()
+      }
+    }
+  }
+  private var makeRoomItem: NSMenuItem?
   private var cancellable: Any?
 
   private let width: CGFloat = 310
@@ -94,6 +112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.settle() }
     }
+
+    ghosttyWindows.reserved = { [weak self] in
+      guard let self, self.makesRoom, self.panelShown else { return nil }
+      return (self.targetFrame(visible: true), self.edge)
+    }
+    if makesRoom { _ = GhosttyWindows.isTrusted(prompt: true) }
+    ghosttyWindows.start()
 
     store.start()
     showPanel()
@@ -151,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
       context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
       panel.animator().setFrame(targetFrame(visible: true), display: true)
     }
+    ghosttyWindows.fit()
   }
 
   @objc private func moveToDisplay(_ sender: NSMenuItem) {
@@ -184,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
   }
 
   private func showPanel() {
+    panelShown = true
     panel.setFrame(targetFrame(visible: false), display: false)
     panel.alphaValue = 0
     panel.orderFrontRegardless()
@@ -194,9 +221,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
       panel.animator().setFrame(targetFrame(visible: true), display: true)
       panel.animator().alphaValue = 1
     }
+    ghosttyWindows.fit()
   }
 
   private func hidePanel() {
+    panelShown = false
     NSAnimationContext.runAnimationGroup { context in
       context.duration = 0.25
       context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -236,6 +265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
   }
 
+  @objc private func toggleMakesRoom() {
+    makesRoom.toggle()
+  }
+
   @objc private func toggleFollowsGhostty() {
     followsGhostty.toggle()
   }
@@ -272,6 +305,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     follow.toolTip = "Show the panel while Ghostty is frontmost, and hide it otherwise."
     followItem = follow
     menu.addItem(follow)
+    let room = item("Make Room in Ghostty", #selector(toggleMakesRoom), key: "")
+    room.state = makesRoom ? .on : .off
+    room.toolTip = "Narrow Ghostty's windows so they stop at the panel. Needs Accessibility access."
+    makeRoomItem = room
+    menu.addItem(room)
     menu.addItem(item("New Session…", #selector(newSession), key: "n"))
     let displays = NSMenuItem(title: "Move to Display", action: nil, keyEquivalent: "")
     displayMenu.delegate = self

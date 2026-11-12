@@ -16,9 +16,15 @@ Each row shows the session title, the main repo that the session worked in (from
 
 Click the repo chip, or the chevron that shows on hover, to expand a card. The expanded card shows each repo with its branch and Claude's last action. Click a repo line to show the folder in Finder.
 
-## Move the panel
+## Where the panel goes
 
-Drag the "Sessions" header to any display. When you release it, the panel docks to the nearer edge. You can also use **Move to Display** in the menu bar item. The app keeps the display and the edge after a restart.
+The panel attaches to Ghostty's focused window, the way a sidebar would. It sits beside the window, is as tall as it, and follows it when you move it, resize it or switch to another window. Other apps' windows cover the panel as they cover the terminal. When no Ghostty window is on screen (Ghostty is hidden, minimized or full screen, or on another Space), the panel hides.
+
+If the window reaches into the panel's place, the app narrows the window once, so the panel fits on the screen. It does not narrow a window below 360 points.
+
+To change sides, drag the "Sessions" header to the other side of the window, or use **Panel Side** in the menu bar item. The app keeps the side after a restart.
+
+The app follows the window through the Accessibility API, because Ghostty has no AppleScript for window bounds. On the first run, macOS asks for Accessibility access. Turn it on in System Settings → Privacy & Security → Accessibility. The panel shows as soon as you do.
 
 ## Keys
 
@@ -37,7 +43,7 @@ You need the Xcode Command Line Tools. The full Xcode app is not necessary.
 open "build/Ghostty Sessions.app"
 ```
 
-On the first run, macOS asks for permission to control Ghostty. Allow it. If you deny it, enable it again in System Settings → Privacy & Security → Automation.
+On the first run, macOS asks for permission to control Ghostty and for Accessibility access (see [Where the panel goes](#where-the-panel-goes)). Allow both. If you deny control of Ghostty, enable it again in System Settings → Privacy & Security → Automation.
 
 To see the matched sessions as text, run `.build/release/GhosttySessions --dump`.
 

@@ -159,7 +159,8 @@ private struct VisualEffect: NSViewRepresentable {
   func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
-// Dragging the header moves the panel; the app docks it to an edge on release.
+// Dragging the header moves the panel; on release, the app puts it on the side
+// of Ghostty's window it was dropped on.
 private struct DragHandle: NSViewRepresentable {
   final class HandleView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

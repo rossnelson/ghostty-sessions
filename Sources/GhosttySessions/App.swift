@@ -14,76 +14,40 @@ final class SidebarPanel: NSPanel {
   override var canBecomeMain: Bool { false }
 }
 
-enum PanelEdge: String {
-  case left
-  case right
-}
-
 extension Notification.Name {
   static let panelDragEnded = Notification.Name("panelDragEnded")
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
   private let store = SessionStore()
   private var panel: SidebarPanel!
   private var statusItem: NSStatusItem!
   private var hotKeys: [HotKey] = []
-
-  private static let ghosttyBundleID = "com.mitchellh.ghostty"
-  private static let followKey = "followsGhosttyFocus"
-
-  /// Show the panel while Ghostty is frontmost and hide it otherwise. The panel
-  /// is only useful next to a terminal, so this is on unless it is turned off.
-  private var followsGhostty: Bool {
-    get {
-      UserDefaults.standard.object(forKey: Self.followKey) as? Bool ?? true
-    }
-    set {
-      UserDefaults.standard.set(newValue, forKey: Self.followKey)
-      followItem?.state = newValue ? .on : .off
-      if newValue { syncPanelToFrontmostApp() }
-    }
-  }
-  private var followItem: NSMenuItem?
-
-  private static let makeRoomKey = "makesRoomInGhostty"
-  private let ghosttyWindows = GhosttyWindows()
-  private var panelShown = false
-
-  /// Narrow Ghostty's windows so they stop at the panel instead of under it.
-  private var makesRoom: Bool {
-    get { UserDefaults.standard.object(forKey: Self.makeRoomKey) as? Bool ?? true }
-    set {
-      UserDefaults.standard.set(newValue, forKey: Self.makeRoomKey)
-      makeRoomItem?.state = newValue ? .on : .off
-      if newValue {
-        _ = GhosttyWindows.isTrusted(prompt: true)
-        ghosttyWindows.fit()
-      }
-    }
-  }
-  private var makeRoomItem: NSMenuItem?
   private var cancellable: Any?
 
   private let width: CGFloat = 310
-  // How far past the screen edge the panel parks while hidden.
-  private let slide: CGFloat = 10
-  private let displayMenu = NSMenu()
-
-  private var displayName: String? {
-    get { UserDefaults.standard.string(forKey: "panelDisplay") }
-    set { UserDefaults.standard.set(newValue, forKey: "panelDisplay") }
-  }
+  private let tracker = GhosttyWindowTracker()
+  /// Ghostty's focused window, while the panel sits beside it.
+  private var ghosttyWindow: GhosttyWindow?
+  /// Hidden with ⌃⌥S or the menu, until shown the same way.
+  private var hiddenByUser = false
+  /// The frame last asked of Ghostty's window, so a window that settles a few
+  /// points off is not moved again.
+  private var requestedFrame: CGRect?
+  /// While Ghostty's window moves, its events report in-between frames.
+  private var moving = false
+  private var moveTask: Task<Void, Never>?
+  private var clickMonitors: [Any] = []
+  private var trustTimer: Timer?
+  private var sideItems: [NSMenuItem] = []
 
   private var edge: PanelEdge {
     get { PanelEdge(rawValue: UserDefaults.standard.string(forKey: "panelEdge") ?? "") ?? .right }
-    set { UserDefaults.standard.set(newValue.rawValue, forKey: "panelEdge") }
-  }
-
-  // The saved display, or the main display when the saved one is not connected.
-  private var screen: NSScreen {
-    NSScreen.screens.first { $0.localizedName == displayName } ?? NSScreen.main ?? NSScreen.screens[0]
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: "panelEdge")
+      for item in sideItems { item.state = (item.tag == 0) == (newValue == .left) ? .on : .off }
+    }
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -91,7 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     buildStatusItem()
     registerHotKeys()
     setUpNotifications()
-    observeAppFocus()
 
     store.onNeedsYou = { [weak self] session, looking in
       self?.updateBadge()
@@ -105,180 +68,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     NotificationCenter.default.addObserver(
       forName: .panelDragEnded, object: nil, queue: .main
     ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.snapAfterDrag() }
+      MainActor.assumeIsolated { self?.chooseSideAfterDrag() }
     }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
     ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.settle() }
+      MainActor.assumeIsolated { self?.tracker.update() }
     }
 
-    ghosttyWindows.reserved = { [weak self] in
-      guard let self, self.makesRoom, self.panelShown else { return nil }
-      return (self.targetFrame(visible: true), self.edge)
+    tracker.onChange = { [weak self] window in
+      guard let self, !self.moving else { return }
+      self.layout(window)
     }
-    if makesRoom { _ = GhosttyWindows.isTrusted(prompt: true) }
-    ghosttyWindows.start()
+    // The panel follows Ghostty's window through the Accessibility API. Until
+    // that permission is on, ask for it and check again every few seconds.
+    if !GhosttyWindowTracker.isTrusted(prompt: true) {
+      trustTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+        MainActor.assumeIsolated {
+          guard GhosttyWindowTracker.isTrusted(prompt: false) else { return }
+          timer.invalidate()
+          self?.tracker.update()
+        }
+      }
+    }
+    tracker.start()
+    keepPanelAboveGhostty()
 
     store.start()
-    showPanel()
   }
 
   private func buildPanel() {
     panel = SidebarPanel(
-      contentRect: targetFrame(visible: true),
+      contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
       styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
-    panel.isFloatingPanel = true
-    panel.level = .floating
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    // A normal window beside Ghostty's window, kept directly above it. Other
+    // apps' windows cover both, as they would cover the terminal alone.
+    panel.level = .normal
+    panel.collectionBehavior = [.fullScreenNone, .ignoresCycle]
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.hasShadow = true
     panel.isMovableByWindowBackground = false
     panel.hidesOnDeactivate = false
-
+    panel.animationBehavior = .none
     panel.becomesKeyOnlyIfNeeded = true
 
     let host = FirstClickHostingView(rootView: SidebarView(store: store))
     host.wantsLayer = true
+    host.sizingOptions = []
     panel.contentView = host
   }
 
-  private func targetFrame(visible: Bool) -> NSRect {
-    let area = screen.visibleFrame
-    // Visible, the panel is flush against its edge and full height between
-    // the menu bar and the Dock. Hidden, it parks just past the edge.
-    let x = switch (edge, visible) {
-    case (.right, true): area.maxX - width
-    case (.right, false): area.maxX + slide
-    case (.left, true): area.minX
-    case (.left, false): area.minX - width - slide
+  // MARK: - Placement
+
+  private func layout(_ window: GhosttyWindow?) {
+    ghosttyWindow = window
+    guard let window, !hiddenByUser else { return hide() }
+
+    let screen = NSScreen.screens.first { $0.frame.intersects(window.frame) } ?? NSScreen.main
+    let visible = screen?.visibleFrame ?? window.frame
+    let layout = PanelLayout.compute(window: window.frame, screen: visible, edge: edge, width: width)
+    // Correct the window once per move by the person; never chase its settling.
+    if let moved = layout.windowFrame, !(requestedFrame?.isClose(to: window.frame, within: 12) ?? false) {
+      return moveGhostty(to: moved)
     }
-    return NSRect(x: x, y: area.minY, width: width, height: area.height)
-  }
 
-  // After a drag, the panel docks to the nearer edge of the display it was dropped on.
-  private func snapAfterDrag() {
-    let center = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
-    guard let dropped = NSScreen.screens.first(where: { $0.frame.contains(center) }) else { return settle() }
-    displayName = dropped.localizedName
-    edge = center.x < dropped.frame.midX ? .left : .right
-    settle()
-  }
-
-  private func settle() {
-    guard panel.isVisible else { return }
+    let wasVisible = panel.isVisible
+    panel.setFrame(layout.panel, display: true)
+    panel.order(.above, relativeTo: window.windowNumber)
+    guard !wasVisible else { return }
+    panel.alphaValue = 0
     NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.35
-      context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
-      panel.animator().setFrame(targetFrame(visible: true), display: true)
+      context.duration = 0.18
+      panel.animator().alphaValue = 1
     }
-    ghosttyWindows.fit()
   }
 
-  @objc private func moveToDisplay(_ sender: NSMenuItem) {
-    displayName = sender.representedObject as? String
-    showPanel()
+  private func hide() {
+    panel.orderOut(nil)
   }
 
-  @objc private func moveToEdge(_ sender: NSMenuItem) {
+  /// Moves Ghostty's window out of the panel's place, ignoring its events
+  /// until the move is done, then lays out once from where it ended up.
+  private func moveGhostty(to frame: CGRect) {
+    requestedFrame = frame
+    moving = true
+    moveTask?.cancel()
+    moveTask = Task { [weak self] in
+      guard let self else { return }
+      await tracker.moveCurrentWindow(to: frame)
+      guard !Task.isCancelled else { return }
+      moving = false
+      tracker.update()
+    }
+  }
+
+  /// A click in Ghostty raises its window without an Accessibility event, and
+  /// a click in the panel can raise the panel. Put the panel back directly
+  /// above Ghostty's window after each click.
+  private func keepPanelAboveGhostty() {
+    let reorder = { [weak self] in
+      guard let self, panel.isVisible, let number = ghosttyWindow?.windowNumber else { return }
+      panel.order(.above, relativeTo: number)
+    }
+    if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp], handler: { _ in
+      MainActor.assumeIsolated { reorder() }
+    }) { clickMonitors.append(global) }
+    if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp], handler: { event in
+      MainActor.assumeIsolated { reorder() }
+      return event
+    }) { clickMonitors.append(local) }
+  }
+
+  // After a drag, the panel goes to the side of Ghostty's window it was dropped on.
+  private func chooseSideAfterDrag() {
+    if let window = ghosttyWindow {
+      edge = panel.frame.midX < window.frame.midX ? .left : .right
+    }
+    requestedFrame = nil
+    layout(ghosttyWindow)
+  }
+
+  @objc private func chooseSide(_ sender: NSMenuItem) {
     edge = sender.tag == 0 ? .left : .right
-    showPanel()
-  }
-
-  func menuNeedsUpdate(_ menu: NSMenu) {
-    guard menu === displayMenu else { return }
-    menu.removeAllItems()
-
-    for display in NSScreen.screens {
-      let entry = item(display.localizedName, #selector(moveToDisplay(_:)), key: "")
-      entry.representedObject = display.localizedName
-      entry.state = display == screen ? .on : .off
-      menu.addItem(entry)
-    }
-
-    menu.addItem(.separator())
-    for (tag, title) in ["Left Edge", "Right Edge"].enumerated() {
-      let entry = item(title, #selector(moveToEdge(_:)), key: "")
-      entry.tag = tag
-      entry.state = (tag == 0) == (edge == .left) ? .on : .off
-      menu.addItem(entry)
-    }
+    requestedFrame = nil
+    layout(ghosttyWindow)
   }
 
   private func showPanel() {
-    panelShown = true
-    panel.setFrame(targetFrame(visible: false), display: false)
-    panel.alphaValue = 0
-    panel.orderFrontRegardless()
-
-    NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.38
-      context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
-      panel.animator().setFrame(targetFrame(visible: true), display: true)
-      panel.animator().alphaValue = 1
-    }
-    ghosttyWindows.fit()
+    hiddenByUser = false
+    requestedFrame = nil
+    tracker.update()
   }
 
   private func hidePanel() {
-    panelShown = false
-    NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.25
-      context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-      panel.animator().setFrame(targetFrame(visible: false), display: true)
-      panel.animator().alphaValue = 0
-    } completionHandler: {
-      Task { @MainActor in self.panel.orderOut(nil) }
-    }
-  }
-
-  private func observeAppFocus() {
-    NSWorkspace.shared.notificationCenter.addObserver(
-      forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-    ) { [weak self] note in
-      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-      Task { @MainActor in self?.appBecameActive(app?.bundleIdentifier) }
-    }
-    syncPanelToFrontmostApp()
-  }
-
-  private func syncPanelToFrontmostApp() {
-    appBecameActive(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
-  }
-
-  private func appBecameActive(_ bundleID: String?) {
-    guard followsGhostty else { return }
-    // Our own activation is not a reason to hide: clicking the panel, the menu
-    // bar item, or the new-session form makes this app frontmost, and hiding
-    // there would close the panel the moment it is used.
-    guard bundleID != Bundle.main.bundleIdentifier else { return }
-
-    let visible = panel.isVisible && panel.alphaValue > 0
-    if bundleID == Self.ghosttyBundleID {
-      if !visible { showPanel() }
-    } else if visible {
-      hidePanel()
-    }
-  }
-
-  @objc private func toggleMakesRoom() {
-    makesRoom.toggle()
-  }
-
-  @objc private func toggleFollowsGhostty() {
-    followsGhostty.toggle()
+    hiddenByUser = true
+    hide()
   }
 
   @objc private func togglePanel() {
-    panel.isVisible && panel.alphaValue > 0 ? hidePanel() : showPanel()
+    hiddenByUser ? showPanel() : hidePanel()
   }
 
   @objc private func newSession() {
-    if !panel.isVisible { showPanel() }
+    if hiddenByUser { showPanel() }
     NSApp.activate()
     panel.makeKey()
   }
@@ -300,21 +236,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
       toggle.toolTip = "⌃⌥S is taken by another app, so the global shortcut is off."
     }
     menu.addItem(toggle)
-    let follow = item("Show With Ghostty", #selector(toggleFollowsGhostty), key: "")
-    follow.state = followsGhostty ? .on : .off
-    follow.toolTip = "Show the panel while Ghostty is frontmost, and hide it otherwise."
-    followItem = follow
-    menu.addItem(follow)
-    let room = item("Make Room in Ghostty", #selector(toggleMakesRoom), key: "")
-    room.state = makesRoom ? .on : .off
-    room.toolTip = "Narrow Ghostty's windows so they stop at the panel. Needs Accessibility access."
-    makeRoomItem = room
-    menu.addItem(room)
     menu.addItem(item("New Session…", #selector(newSession), key: "n"))
-    let displays = NSMenuItem(title: "Move to Display", action: nil, keyEquivalent: "")
-    displayMenu.delegate = self
-    displays.submenu = displayMenu
-    menu.addItem(displays)
+
+    let sides = NSMenu()
+    for (tag, title) in ["Left of Ghostty", "Right of Ghostty"].enumerated() {
+      let entry = item(title, #selector(chooseSide(_:)), key: "")
+      entry.tag = tag
+      entry.state = (tag == 0) == (edge == .left) ? .on : .off
+      sideItems.append(entry)
+      sides.addItem(entry)
+    }
+    let side = NSMenuItem(title: "Panel Side", action: nil, keyEquivalent: "")
+    side.submenu = sides
+    menu.addItem(side)
+
     menu.addItem(.separator())
     menu.addItem(item("Quit Ghostty Sessions", #selector(quit), key: "q"))
     statusItem.menu = menu
